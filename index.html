@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Instructor Grading</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root{--bg:#f6f5f1;--sf:#fff;--tx:#1d1d1b;--mu:#6b6a64;--bd:#dcdad2;--ac:#1f5fbf;--ac-tx:#fff;--dg:#b3261e;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#171716;--sf:#222220;--tx:#efeee9;--mu:#9c9a92;--bd:#3a3935;--ac:#6ea2f0;--ac-tx:#101010;--dg:#f2897f;color-scheme:dark}}
+:root[data-theme="dark"]{--bg:#171716;--sf:#222220;--tx:#efeee9;--mu:#9c9a92;--bd:#3a3935;--ac:#6ea2f0;--ac-tx:#101010;--dg:#f2897f;color-scheme:dark}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--tx);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+#app{max-width:640px;margin:0 auto;padding:16px}
+h1{font-size:1.5rem;margin:.2em 0 .6em}h2{font-size:1.15rem;margin:.2em 0 .6em}
+.muted{color:var(--mu);font-size:.9rem}
+button,input,textarea{font:inherit;color:inherit}
+input,textarea{width:100%;padding:10px;border:1px solid var(--bd);border-radius:10px;background:var(--sf);margin:4px 0 12px}
+button{border:1px solid var(--bd);background:var(--sf);border-radius:10px;padding:12px 14px;cursor:pointer}
+button.p{background:var(--ac);color:var(--ac-tx);border-color:var(--ac)}
+button.d{color:var(--dg)}
+.grid{display:grid;gap:10px}.grid button{text-align:left;font-size:1.05rem;padding:16px}
+.card{background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:12px;margin:10px 0}
+.row{display:flex;justify-content:space-between;align-items:center;gap:8px;margin:8px 0;flex-wrap:wrap}
+.pills{display:flex;gap:4px;flex-wrap:wrap}.pills button{padding:8px 12px;min-width:40px}
+.pills button.on{background:var(--ac);color:var(--ac-tx);border-color:var(--ac)}
+.top{display:flex;gap:8px;align-items:center;margin-bottom:8px}
+.sc{overflow-x:auto}table{border-collapse:collapse;width:100%;font-size:.9rem}
+th,td{border-bottom:1px solid var(--bd);padding:6px 8px;text-align:left;white-space:nowrap}
+</style></head><body><div id="app"></div>
+<script>
+window.addEventListener('error',e=>{const a=document.getElementById('app');if(a&&!a.innerHTML.trim())a.innerHTML='<h1>Something went wrong</h1><p class="muted">'+esc(e.message)+'</p>'});
+let db=null,loaded=0,S={acts:[],groups:[],scores:[]},V={n:'home'},me='';
+try{me=localStorage.getItem('instr')||''}catch(e){}
+const $=s=>document.querySelector(s);
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+let P=null;const toast=m=>{let t=$('#toast');if(!t){t=document.createElement('div');t.id='toast';t.style.cssText='position:fixed;left:12px;right:12px;bottom:calc(12px + env(safe-area-inset-bottom,0px));background:var(--tx);color:var(--bg);padding:12px;border-radius:10px;text-align:center;z-index:9';document.body.appendChild(t)}t.textContent=m;t.style.display='block';clearTimeout(t._h);t._h=setTimeout(()=>t.style.display='none',3500)};window.alert=toast;
+const uid=()=>Math.random().toString(36).slice(2,9);
+const hash=s=>{let x=5381;for(const c of s.trim().toLowerCase())x=((x*33)^c.codePointAt(0))>>>0;return x.toString(36)};
+const act=id=>S.acts.find(a=>a.id===id),grp=id=>S.groups.find(g=>g.id===id);
+const mx=a=>a.criteria.reduce((t,c)=>t+c.max,0);
+const back=(to)=>`<div class="top"><button data-a="go" data-v="${to}">← Back</button></div>`;
+
+function render(){
+  const y=window.scrollY;let h='';
+  const keep={};document.querySelectorAll('#app input[id],#app textarea[id]').forEach(el=>{keep[el.id]=[el.value,el===document.activeElement,el.selectionStart,el.selectionEnd]});
+  if(session===undefined){h='<h1>Instructor Grading</h1><p class="muted">Connecting…</p>'}
+  else if(!session){h=`<h1>Instructor Grading</h1><p class="muted">Sign in with the account your admin created for you.</p><label class="muted">Email</label><input id="em" type="email" autocomplete="username"><label class="muted">Password</label><input id="pw" type="password" autocomplete="current-password"><button class="p" data-a="login">Sign in</button>`}
+  else if(!db){h=`<h1>Instructor Grading</h1><p class="muted">${loaded==='fail'?'Shared storage is unavailable. Please sign in and reopen the page.':'Connecting…'}</p>`}
+  else if(V.n==='home'){
+    h=`<h1>Instructor Grading</h1><p class="muted">Signed in as <b>${esc(me)}</b></p>
+    <div class="grid">
+    <button data-a="go" data-v="pick">Grade an activity</button>
+    <button data-a="go" data-v="newact">Create new activity</button>
+    <button data-a="go" data-v="groups">Create / delete groups</button>
+    <button data-a="go" data-v="res">Results</button>
+    <button data-a="json">Download all data (JSON file)</button>
+    <button data-a="logout">Sign out</button></div>`}
+  else if(V.n==='pick'||V.n==='res'){
+    const r=V.n==='res';
+    h=back('home')+`<h2>${r?'Results for which activity?':'Which activity are you grading?'}</h2>`;
+    if(!S.acts.length)h+='<p class="muted">No activities yet. Create one first.</p>';
+    h+=S.acts.map(a=>`<div class="row"><button style="flex:1;text-align:left" data-a="${r?'resof':'actof'}" data-id="${a.id}">${esc(a.name)} <span class="muted">/${mx(a)}</span></button><button class="d" data-a="delact" data-id="${a.id}">${P===a.id?'Tap again to confirm':'Delete'}</button></div>`).join('')}
+  else if(V.n==='newact'){
+    h=back('home')+`<h2>New activity</h2><label class="muted">Activity name</label><input id="an" placeholder="e.g. Group presentation">
+    <label class="muted">Criteria, one per line as: name, max score</label>
+    <textarea id="ac" rows="6" placeholder="Communication, 5&#10;Content, 5&#10;Teamwork, 5"></textarea>
+    <button class="p" data-a="saveact">Save activity</button>`}
+  else if(V.n==='groups'){
+    h=back('home')+`<h2>Groups</h2><div class="card"><label class="muted">Group name</label><input id="gn" placeholder="e.g. Group A">
+    <label class="muted">Students, one per line</label><textarea id="gs" rows="5"></textarea>
+    <button class="p" data-a="savegrp">Create group</button></div>`;
+    h+=S.groups.map(g=>`<div class="card"><div class="row"><b>${esc(g.name)}</b><button class="d" data-a="delgrp" data-id="${g.id}">${P===g.id?'Tap again to confirm':'Delete'}</button></div><div class="muted">${g.students.map(s=>esc(s.name)).join(', ')}</div></div>`).join('')}
+  else if(V.n==='grp'){
+    const a=act(V.act);
+    h=back('pick')+`<h2>${esc(a?a.name:'')}: choose a group</h2>`;
+    if(!S.groups.length)h+='<p class="muted">No groups yet.</p>';
+    h+=`<div class="grid">`+S.groups.map(g=>`<button data-a="grade" data-id="${g.id}">${esc(g.name)} <span class="muted">${g.students.length} students</span></button>`).join('')+'</div>'}
+  else if(V.n==='grade'){
+    const a=act(V.act),g=grp(V.grp);
+    if(!a||!g){V={n:'home'};return render()}
+    h=back('grp')+`<h2>${esc(a.name)} · ${esc(g.name)}</h2>`;
+    if(!me)h+='<p class="muted">Enter your name on the home page first, so your grades are saved under it.</p>';
+    h+=g.students.map(s=>{
+      const d=S.scores.find(x=>x.id===key(a.id,s.id))||{scores:{}};
+      let t=0;
+      const rows=a.criteria.map((c,i)=>{const v=d.scores[i];if(v!=null)t+=v;
+        let p='';for(let k=0;k<=c.max;k++)p+=`<button class="${v===k?'on':''}" data-a="sc" data-s="${s.id}" data-c="${i}" data-v="${k}">${k}</button>`;
+        return `<div class="row"><span>${esc(c.name)}</span><span class="pills">${p}</span></div>`}).join('');
+      return `<div class="card"><b>${esc(s.name)}</b>${rows}<div class="muted">Total ${t}/${mx(a)}</div></div>`}).join('')}
+  else if(V.n==='resof'){
+    const a=act(V.act);if(!a){V={n:'res'};return render()}
+    const rows=S.scores.filter(x=>x.activityId===a.id),by={};
+    rows.forEach(x=>(by[x.studentId]=by[x.studentId]||[]).push(x));
+    const avg=(l,i)=>{const v=l.map(x=>x.scores[i]).filter(n=>n!=null);return v.length?v.reduce((p,q)=>p+q,0)/v.length:null};
+    const f=n=>n==null?'–':(Math.round(n*10)/10);
+    const body=Object.values(by).map(l=>{const av=a.criteria.map((c,i)=>avg(l,i));const tot=av.reduce((p,q)=>p+(q||0),0);
+      return `<tr><td>${esc(l[0].studentName)}</td><td>${esc(l[0].groupName)}</td>${av.map(n=>`<td>${f(n)}</td>`).join('')}<td><b>${f(tot)}/${mx(a)}</b></td><td>${l.length}</td></tr>`}).join('');
+    h=back('res')+`<h2>${esc(a.name)}</h2>`+(rows.length?`<div class="sc"><table><tr><th>Student</th><th>Group</th>${a.criteria.map(c=>`<th>${esc(c.name)}</th>`).join('')}<th>Total</th><th>Graders</th></tr>${body}</table></div><p class="muted">Averages across instructors.</p><button data-a="csv">Download CSV (every instructor)</button>`:'<p class="muted">No grades yet.</p>')}
+  $('#app').innerHTML=h;window.scrollTo(0,y);
+  for(const id in keep){const el=document.getElementById(id);if(el){el.value=keep[id][0];if(keep[id][1]){el.focus();try{el.setSelectionRange(keep[id][2],keep[id][3])}catch(e){}}}}
+}
+const key=(a,s)=>a+'_'+hash(me||'x')+'_'+s;
+
+document.addEventListener('input',e=>{if(e.target.id==='me'){me=e.target.value;try{localStorage.setItem('instr',me)}catch(x){}}});
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-a]');if(!b||!db)return;
+  const d=b.dataset,a=d.a;
+  try{
+  if(a==='go'){V={n:d.v};if(d.v==='home'||d.v==='groups'||d.v==='newact'||d.v==='pick'||d.v==='res')render();else render()}
+  else if(a==='actof'){V={n:'grp',act:d.id};render()}
+  else if(a==='resof'){V={n:'resof',act:d.id};render()}
+  else if(a==='grade'){V={n:'grade',act:V.act,grp:d.id};render()}
+  else if(a==='saveact'){
+    const name=$('#an').value.trim(),cr=$('#ac').value.split('\n').map(l=>l.trim()).filter(Boolean).map(l=>{const p=l.split(',');const m=parseInt(p[1]);return{name:p[0].trim(),max:Math.min(20,m>0?m:5)}});
+    if(!name||!cr.length)return alert('Add a name and at least one criterion.');
+    const id=uid();await db.doc('activities/'+id).set({id,name,criteria:cr});V={n:'home'};render()}
+  else if(a==='savegrp'){
+    const name=$('#gn').value.trim(),st=$('#gs').value.split('\n').map(l=>l.trim()).filter(Boolean).map(n=>({id:uid(),name:n}));
+    if(!name||!st.length)return alert('Add a group name and at least one student.');
+    const id=uid();await db.doc('groups/'+id).set({id,name,students:st});$('#gn').value='';$('#gs').value=''}
+  else if(a==='delgrp'){if(P!==d.id){P=d.id;render()}else{P=null;await db.doc('groups/'+d.id).delete()}}
+  else if(a==='delact'){if(P!==d.id){P=d.id;render()}else{P=null;await db.doc('activities/'+d.id).delete()}}
+  else if(a==='sc'){
+    if(!me)return alert('Enter your name on the home page first.');
+    const ac=act(V.act),g=grp(V.grp),s=g.students.find(x=>x.id===d.s),k=key(ac.id,s.id);
+    const cur=S.scores.find(x=>x.id===k),scores={...(cur?cur.scores:{})};scores[d.c]=+d.v;
+    await db.doc('scores/'+k).set({id:k,activityId:ac.id,instructor:me.trim(),studentId:s.id,studentName:s.name,groupId:g.id,groupName:g.name,scores})}
+  else if(a==='json'){
+    const dl=await dlShim;if(!dl)return alert('Download is not available here.');
+    await dl.save({filename:'grading-data.json',data:JSON.stringify({exportedAt:new Date().toISOString(),activities:S.acts,groups:S.groups,scores:S.scores},null,2)})}
+  else if(a==='csv'){
+    const ac=act(V.act),q=v=>'"'+String(v).replace(/"/g,'""')+'"';
+    const lines=[['Instructor','Group','Student',...ac.criteria.map(c=>c.name),'Total'].map(q).join(',')];
+    S.scores.filter(x=>x.activityId===ac.id).forEach(x=>{const t=ac.criteria.reduce((p,c,i)=>p+(x.scores[i]||0),0);
+      lines.push([x.instructor,x.groupName,x.studentName,...ac.criteria.map((c,i)=>x.scores[i]??''),t].map(q).join(','))});
+    const dl=await dlShim;if(!dl)return alert('Download is not available here.');
+    await dl.save({filename:ac.name+'.csv',data:'\ufeff'+lines.join('\n')})}
+  }catch(err){if(err&&err.code!=='cancelled')alert('Could not save: '+(err.message||err))}
+});
+
+
+// ---- Supabase storage client ----
+const SUPABASE_URL='https://xicmztexxjwougfyjwfa.supabase.co',SUPABASE_KEY='sb_publishable_i7phhv1ngTPIoD2xDAnfBQ_5zY0gGA9';
+if(SUPABASE_URL.startsWith('PASTE')||SUPABASE_KEY.startsWith('PASTE')){document.getElementById('app').innerHTML='<h1>Setup needed</h1><p class="muted">Open index.html and replace PASTE_PROJECT_URL and PASTE_PUBLISHABLE_KEY with your Supabase values.</p>';throw new Error('Supabase keys missing')}
+const sb=supabase.createClient(SUPABASE_URL,SUPABASE_KEY);
+let session,last=null,pollT=null;const subs=[];
+const snap=o=>({docs:Object.values(o||{}).map(d=>({data:()=>d}))});
+async function poll(){
+  const{data,error}=await sb.from('docs').select('col,id,data');
+  if(error){console.error(error);return}
+  const o={activities:{},groups:{},scores:{}};
+  data.forEach(r=>{if(o[r.col])o[r.col][r.id]=r.data});
+  last=o;subs.forEach(([c,cb])=>cb(snap(last[c])));
+}
+const chk=r=>{if(r.error)throw r.error};
+const api={doc:p=>{const[c,i]=p.split('/');return{
+  set:async o=>{chk(await sb.from('docs').upsert({col:c,id:i,data:o}));await poll()},
+  delete:async()=>{chk(await sb.from('docs').delete().eq('col',c).eq('id',i));await poll()}}},
+  collection:c=>({onSnapshot:cb=>{subs.push([c,cb]);if(last)cb(snap(last[c]))}})};
+const dlShim={save:async({filename,data})=>{const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([data]));a.download=filename;document.body.appendChild(a);a.click();a.remove()}};
+const sub=(c,k)=>api.collection(c).onSnapshot(s=>{S[k]=s.docs.map(d=>d.data());render()});
+sub('activities','acts');sub('groups','groups');sub('scores','scores');
+
+document.addEventListener('click',async e=>{
+  const b=e.target.closest('button[data-a="login"],button[data-a="logout"]');if(!b)return;
+  if(b.dataset.a==='logout'){await sb.auth.signOut();return}
+  const r=await sb.auth.signInWithPassword({email:$('#em').value.trim(),password:$('#pw').value});
+  if(r.error)alert(r.error.message);
+});
+sb.auth.onAuthStateChange((ev,s)=>{
+  session=s;
+  if(s){{const m=s.user.user_metadata||{};me=(m.display_name||m.full_name||m.name||(s.user.email||'').split('@')[0]).trim()}if(!db){db=api;poll();pollT=setInterval(poll,3000)}}
+  else{db=null;clearInterval(pollT);last=null;V={n:'home'}}
+  render();
+});
+render();
+</script></body></html>
